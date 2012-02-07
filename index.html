@@ -1,0 +1,149 @@
+<html>
+<head>
+<title>OpenACD Kendo</title>
+<!-- UI -->
+<script type="text/javascript" src="js/jquery.min.js"></script>
+
+<!-- RSA Utilities -->
+<script type="text/javascript" src="js/rsa/jsbn.js"></script>
+<script type="text/javascript" src="js/rsa/prng4.js"></script>
+<script type="text/javascript" src="js/rsa/rng.js"></script>
+<script type="text/javascript" src="js/rsa/rsa.js"></script>
+
+<!-- Main -->
+<script type="text/javascript">
+
+var API_URL = 'api';
+
+var printCbk = function(e) {console.dir(e)};
+
+var api = function(funName, args, callback) {
+	if (!args) args = [];
+	if (!callback) callback = printCbk;
+
+	var request = {
+		request: JSON.stringify({function: funName, args: args})
+	};
+	return $.post(API_URL, request, callback, 'json');
+};
+
+
+/** API Calls **/
+var login = function(username, password, options, successCbk, failCbk) {
+	if (!successCbk) successCbk = printCbk;
+	if (!failCbk) failCbk = printCbk;
+		
+	api('get_salt', [], function(saltObj) {
+        var salt = saltObj.salt;
+        var pubKey = saltObj.pubkey;
+
+        if (!saltObj.success) {
+            console.error("Error getting salt");
+            failCbk("salterror");
+        }
+
+        var n = pubKey.N;
+        var e = pubKey.E;
+        
+        var rsa = new RSAKey();
+        rsa.setPublic(n, e);
+
+        var decrypted = salt + password;
+        var encrypted = rsa.encrypt(decrypted);
+
+        var args = [username, encrypted, options];
+        api('login', args, function(r) {
+        	if (r.success)
+        		successCbk(r.result);
+        	else
+        		failCbk(r);
+        });
+	});
+};
+
+var willPoll = false;
+var pollRequest = null;
+
+var doPoll = function() {	
+	console.log('polling...');
+	pollRequest = api('poll', [], function(e) {
+		if (e.data) {
+			var data = e.data;
+			for (var i = 0; i < data.length; i++) {
+				var d = data[i];
+				console.log("Received: " + d.command);
+			}
+		}
+		doPoll();
+	});
+};
+
+
+var startPoll = function() {
+	willPoll = true;
+	doPoll();
+}
+
+
+var logout = function() {
+	willPoll = false;
+	if (pollRequest) pollRequest.abort();
+	api('logout');
+};
+
+var getAvailAgents = function(cbk) { api('get_avail_agents', [], cbk); };
+
+/** END API Calls **/
+
+$(function() {
+	$('#login-form').submit(function(e) {
+		var username = $('#username-in').val();
+		var passwordRaw = $('#passwordraw-in').val();
+		var voipType = $('#voiptype-in').val();
+		var voipData = $('#voipdata-in').val();
+
+		var options = {
+			voipendpointdata: voipData,
+			voipendpoint: voipType,
+			usepersistentring: true
+		};
+
+		login(username, passwordRaw, options, function(r) {
+			$('#agent-profile-txt').text(r.profile);
+			$('#security-lvl-txt').text(r.securityLevel);
+
+			startPoll();
+		}, function() {
+			alert('login failed');
+		});
+
+		return false;
+	});
+});
+
+</script>
+</head>
+<body>
+
+<div id="login-div">
+<form id="login-form" method="post">
+<input id="username-in" type="text" name="username" placeholder="Username" value="agent"/>
+<input id="passwordraw-in" type="password" name="password_raw" placeholder="Password" value="Password123"/>
+<select id="voiptype-in">
+	<option>SIP Registration</option>
+	<option selected="">SIP</option>
+	<option>PSTN</option>
+</select>
+<input id="voipdata-in" type="text" placeholder="VoIP data" value="1001"/>
+<input type="submit" value="Log in"/>
+</form>
+</div>
+
+<div id="agent-profile-div">
+<p>Profile: <span id="agent-profile-txt"/></p>
+<p>Security Level: <span id="security-lvl-txt"/></p>
+</div>
+
+
+</body>
+</html>
